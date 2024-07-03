@@ -7,7 +7,9 @@ import (
 
 func addCustomParams(currentParams url.Values, customParams []string, injectValue string) {
 	for _, param := range customParams {
-		currentParams[param] = []string{injectValue}
+		if _, exists := currentParams[param]; !exists {
+			currentParams[param] = []string{injectValue}
+		}
 	}
 }
 
@@ -23,6 +25,14 @@ func generateValue(param, injectValue, vMode string) string {
 
 func addToFinals(urlObj *url.URL, finalUrls *[]string, params url.Values) {
 	cpObj := *urlObj
-	cpObj.RawQuery = params.Encode()
+	newParamsRaw := params.Encode()
+
+	// happens when custom parameter was existed in url, and gs mode is ignore
+	// in this case, url will not receive any change at all, so we skip it.
+	if newParamsRaw == urlObj.RawQuery {
+		return
+	}
+	cpObj.RawQuery = newParamsRaw
+
 	*finalUrls = append(*finalUrls, cpObj.String())
 }

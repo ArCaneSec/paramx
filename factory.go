@@ -13,6 +13,7 @@ type factory struct {
 	gMode        string
 	vMode        string
 	chunks       int
+	threads      int
 }
 
 func (f *factory) generateUrls(customParams []string) ([]string, error) {
@@ -35,44 +36,74 @@ func (f *factory) ignoreMode(customParams []string) []string {
 		return nil
 	}
 	var (
-		finalUrls = make([]string, 0, len(f.urls)*3)
+		finalUrls     = make([]string, 0, len(f.urls)*3)
+		capGoroutines = make(chan struct{}, f.threads)
+		wg            sync.WaitGroup
+		params        url.Values
 	)
 
 	for _, urlObj := range f.urls {
-		for _, injectValue := range f.injectValues {
-			params := urlObj.Query()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			capGoroutines <- struct{}{}
 
-			addCustomParams(params, customParams, injectValue)
-			addToFinals(urlObj, &finalUrls, params)
-		}
+			for _, injectValue := range f.injectValues {
+				params = urlObj.Query()
+
+				addCustomParams(params, customParams, injectValue)
+				addToFinals(urlObj, &finalUrls, params)
+			}
+			<-capGoroutines
+		}()
 	}
+
+	wg.Wait()
 	return finalUrls
 }
 
 func (f *factory) pitchforkMode(customParams []string) []string {
 	var (
-		finalUrls = make([]string, 0, len(f.urls)*3)
+		finalUrls     = make([]string, 0, len(f.urls)*3)
+		params        url.Values
+		wg            sync.WaitGroup
+		capGoroutines = make(chan struct{}, f.threads)
 	)
 
 	for _, urlObj := range f.urls {
-		for _, injectValue := range f.injectValues {
-			params := urlObj.Query()
-			if len(params) == 0 {
-				emptyParamsMap := make(url.Values, len(customParams))
-				addCustomParams(emptyParamsMap, customParams, injectValue)
-				addToFinals(urlObj, &finalUrls, emptyParamsMap)
-			}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			capGoroutines <- struct{}{}
 
-			for param, val := range params {
-				cpParams := make(url.Values, len(params)+len(params))
-				maps.Copy(cpParams, params)
-				cpParams[param] = []string{generateValue(val[0], injectValue, f.vMode)}
+			for _, injectValue := range f.injectValues {
+				params = urlObj.Query()
 
-				addCustomParams(cpParams, customParams, injectValue)
-				addToFinals(urlObj, &finalUrls, cpParams)
+				if len(params) == 0 {
+					if len(customParams) == 0 {
+						continue
+					}
+					emptyParamsMap := make(url.Values, len(customParams))
+
+					addCustomParams(emptyParamsMap, customParams, injectValue)
+					addToFinals(urlObj, &finalUrls, emptyParamsMap)
+					continue
+				}
+
+				for param, val := range params {
+					cpParams := make(url.Values, len(params)+len(params))
+					maps.Copy(cpParams, params)
+					cpParams[param] = []string{generateValue(val[0], injectValue, f.vMode)}
+
+					addCustomParams(cpParams, customParams, injectValue)
+					addToFinals(urlObj, &finalUrls, cpParams)
+				}
 			}
-		}
+			<-capGoroutines
+		}()
 	}
+
+	wg.Wait()
 	return finalUrls
 }
 
