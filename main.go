@@ -44,6 +44,9 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	if totalThreads < 3 {
+		totalThreads = 3
+	}
 	f.goroutinesCap = make(chan struct{}, totalThreads)
 
 	if f.gMode == "ignore" && customParamsPath == "" {
