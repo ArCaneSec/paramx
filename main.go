@@ -10,16 +10,16 @@ import (
 )
 
 func main() {
-	f := factory{injectValues: []string{"'arcane'", `"arcane"`}}
-	f.urls = make([]*url.URL, 0)
+	f := factory{injectValues: []string{"'arcane'", `"arcane"`}, urls: make([]*url.URL, 0)}
 
 	var (
-		customParams string
-		urlsPath     string
-		injectValues string
+		customParamsPath string
+		urlsPath         string
+		injectValuesPath string
+		totalThreads     int
 	)
 
-	flag.StringVar(&f.gMode, "gs", "all",
+	flag.StringVar(&f.gMode, "gs", "ignore",
 		"strategy mode for generating urls [ignore | pitchfork | all]\n"+
 			"ignore: will not touch current parameters, only appending new ones to the url (custom parameters required)\n"+
 			"pitchfork: use inject value in each parameter separately\n"+
@@ -32,21 +32,27 @@ func main() {
 	)
 
 	flag.IntVar(&f.chunks, "c ", 40, "total number of parameter in each url")
-	flag.IntVar(&f.threads, "t", 150, "maximum number of threads")
+	flag.IntVar(&totalThreads, "t", 150, "maximum number of threads")
 
-	flag.StringVar(&customParams, "p", "", "path to file containing parameters separated by \\n (required if using ignore mode)")
-	flag.StringVar(&injectValues, "v", "", "path to file containing inject values by \\n")
-	flag.StringVar(&urlsPath, "u", "", "path to file containing urls separated by \\n")
-
+	flag.StringVar(&customParamsPath, "p", "", "path to parameters file separated by \\n (required if using ignore mode)")
+	flag.StringVar(&injectValuesPath, "v", "", "path to values file separated by \\n")
+	flag.StringVar(&urlsPath, "u", "", "path to urls file separated by \\n")
 	flag.Parse()
 
-	// if f.gMode == "ignore" && customParams == "" {
-	// 	log.Fatalln("[!] ignore mode requires at least 1 custom parameter.")
-	// }
+	if len(os.Args) == 1 {
+		printAscii()
+		flag.Usage()
+		os.Exit(0)
+	}
+	f.goroutinesCap = make(chan struct{}, totalThreads)
 
-	// if injectValues == "" {
-	// 	log.Fatalln("[!] you must provide at least 1 inject value.")
-	// }
+	if f.gMode == "ignore" && customParamsPath == "" {
+		log.Fatalln("[!] ignore mode requires at least 1 custom parameter.")
+	}
+
+	if injectValuesPath == "" {
+		log.Fatalln("[!] you must provide at least 1 inject value.")
+	}
 
 	if urlsPath == "" {
 		fi, err := os.Stdin.Stat()
@@ -60,20 +66,40 @@ func main() {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			urlStr := scanner.Text()
-			urlObj, err := url.Parse(urlStr)
+			parseUrl(urlStr, &f.urls)
+		}
+	} else {
+		urlLines, err := readFile(urlsPath)
+		if err != nil {
+			log.Fatalln(err)
+		}
 
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			f.urls = append(f.urls, urlObj)
+		for _, rawUrl := range urlLines {
+			parseUrl(rawUrl, &f.urls)
 		}
 	}
 
-	urls, err := f.generateUrls([]string{"cmd"})
+	var params []string
+	if customParamsPath != "" {
+		paramLines, err := readFile(customParamsPath)
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		params = paramLines
+	}
+
+	parsedValues, err := readFile(injectValuesPath)
 	if err != nil {
 		log.Fatalln(err)
 	}
+	f.injectValues = parsedValues
+
+	urls, err := f.generateUrls(params)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
 	for _, u := range urls {
 		fmt.Println(u)
 	}

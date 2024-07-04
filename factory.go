@@ -8,12 +8,13 @@ import (
 )
 
 type factory struct {
-	urls         []*url.URL
-	injectValues []string
-	gMode        string
-	vMode        string
-	chunks       int
-	threads      int
+	urls          []*url.URL
+	injectValues  []string
+	gMode         string
+	vMode         string
+	chunks        int
+	threads       int
+	goroutinesCap chan struct{}
 }
 
 func (f *factory) generateUrls(customParams []string) ([]string, error) {
@@ -36,17 +37,16 @@ func (f *factory) ignoreMode(customParams []string) []string {
 		return nil
 	}
 	var (
-		finalUrls     = make([]string, 0, len(f.urls)*3)
-		capGoroutines = make(chan struct{}, f.threads)
-		wg            sync.WaitGroup
-		params        url.Values
+		finalUrls = make([]string, 0, len(f.urls)*3)
+		wg        sync.WaitGroup
+		params    url.Values
 	)
 
 	for _, urlObj := range f.urls {
+		f.goroutinesCap <- struct{}{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			capGoroutines <- struct{}{}
 
 			for _, injectValue := range f.injectValues {
 				params = urlObj.Query()
@@ -54,7 +54,7 @@ func (f *factory) ignoreMode(customParams []string) []string {
 				addCustomParams(params, customParams, injectValue)
 				addToFinals(urlObj, &finalUrls, params)
 			}
-			<-capGoroutines
+			<-f.goroutinesCap
 		}()
 	}
 
@@ -64,17 +64,16 @@ func (f *factory) ignoreMode(customParams []string) []string {
 
 func (f *factory) pitchforkMode(customParams []string) []string {
 	var (
-		finalUrls     = make([]string, 0, len(f.urls)*3)
-		params        url.Values
-		wg            sync.WaitGroup
-		capGoroutines = make(chan struct{}, f.threads)
+		finalUrls = make([]string, 0, len(f.urls)*3)
+		params    url.Values
+		wg        sync.WaitGroup
 	)
 
 	for _, urlObj := range f.urls {
+		f.goroutinesCap <- struct{}{}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			capGoroutines <- struct{}{}
 
 			for _, injectValue := range f.injectValues {
 				params = urlObj.Query()
@@ -99,7 +98,7 @@ func (f *factory) pitchforkMode(customParams []string) []string {
 					addToFinals(urlObj, &finalUrls, cpParams)
 				}
 			}
-			<-capGoroutines
+			<-f.goroutinesCap
 		}()
 	}
 
@@ -114,7 +113,8 @@ func (f *factory) allMode(customParams []string) []string {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-
+	f.goroutinesCap <- struct{}{}
+	f.goroutinesCap <- struct{}{}
 	go func() {
 		defer wg.Done()
 
@@ -133,11 +133,13 @@ func (f *factory) allMode(customParams []string) []string {
 	}()
 	go func() {
 		wg.Wait()
+		<-f.goroutinesCap
+		<-f.goroutinesCap
 		close(allUrlsCh)
 	}()
 
 	for gUrl := range allUrlsCh {
-		if alreadyExists := checkUnique[gUrl]; alreadyExists {
+		if _, alreadyExists := checkUnique[gUrl]; alreadyExists {
 			continue
 		}
 
