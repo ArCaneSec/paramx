@@ -13,7 +13,6 @@ type factory struct {
 	gMode         string
 	vMode         string
 	chunks        int
-	threads       int
 	goroutinesCap chan struct{}
 }
 
@@ -46,15 +45,25 @@ func (f *factory) ignoreMode(customParams []string) []string {
 		f.goroutinesCap <- struct{}{}
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
-
+			defer func() {
+				wg.Done()
+				<-f.goroutinesCap
+			}()
 			for _, injectValue := range f.injectValues {
 				params = urlObj.Query()
+				if len(params) >= f.chunks {
+					continue
+				}
 
-				addCustomParams(params, customParams, injectValue)
-				addToFinals(urlObj, &finalUrls, params)
+				chunksOverflow := len(params) + len(customParams) - f.chunks
+				if chunksOverflow > 0 {
+					addParamsSeparately(urlObj, customParams, injectValue, &finalUrls, params, chunksOverflow, f.chunks)
+				} else {
+					addCustomParams(params, customParams, injectValue)
+					addToFinals(urlObj, &finalUrls, params)
+				}
 			}
-			<-f.goroutinesCap
+
 		}()
 	}
 
@@ -73,8 +82,11 @@ func (f *factory) pitchforkMode(customParams []string) []string {
 		f.goroutinesCap <- struct{}{}
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer func() {
+				defer wg.Done()
+				<-f.goroutinesCap
 
+			}()
 			for _, injectValue := range f.injectValues {
 				params = urlObj.Query()
 
@@ -89,16 +101,20 @@ func (f *factory) pitchforkMode(customParams []string) []string {
 					continue
 				}
 
+				chunksOverflow := len(params) + len(customParams) - f.chunks
 				for param, val := range params {
 					cpParams := make(url.Values, len(params)+len(params))
 					maps.Copy(cpParams, params)
 					cpParams[param] = []string{generateValue(val[0], injectValue, f.vMode)}
 
-					addCustomParams(cpParams, customParams, injectValue)
-					addToFinals(urlObj, &finalUrls, cpParams)
+					if chunksOverflow > 0 {
+						addParamsSeparately(urlObj, customParams, injectValue, &finalUrls, cpParams, chunksOverflow, f.chunks)
+					} else {
+						addCustomParams(cpParams, customParams, injectValue)
+						addToFinals(urlObj, &finalUrls, cpParams)
+					}
 				}
 			}
-			<-f.goroutinesCap
 		}()
 	}
 
@@ -112,9 +128,10 @@ func (f *factory) allMode(customParams []string) []string {
 	checkUnique := make(map[string]bool, len(f.urls)*3)
 
 	var wg sync.WaitGroup
+	f.goroutinesCap <- struct{}{}
+	f.goroutinesCap <- struct{}{}
 	wg.Add(2)
-	f.goroutinesCap <- struct{}{}
-	f.goroutinesCap <- struct{}{}
+
 	go func() {
 		defer wg.Done()
 

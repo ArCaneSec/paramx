@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	f := factory{injectValues: []string{"'arcane'", `"arcane"`}, urls: make([]*url.URL, 0)}
+	f := factory{urls: make([]*url.URL, 0)}
 
 	var (
 		customParamsPath string
@@ -31,7 +31,7 @@ func main() {
 			"replace: replacing parameter's value with inject value",
 	)
 
-	flag.IntVar(&f.chunks, "c ", 40, "total number of parameter in each url")
+	flag.IntVar(&f.chunks, "c", 40, "total number of parameter in each url")
 	flag.IntVar(&totalThreads, "t", 150, "maximum number of threads")
 
 	flag.StringVar(&customParamsPath, "p", "", "path to parameters file separated by \\n (required if using ignore mode)")
@@ -39,11 +39,17 @@ func main() {
 	flag.StringVar(&urlsPath, "u", "", "path to urls file separated by \\n")
 	flag.Parse()
 
-	if len(os.Args) == 1 {
+	flag.Usage = func (){
 		printAscii()
-		flag.Usage()
+		flag.PrintDefaults()
 		os.Exit(0)
 	}
+
+	if len(os.Args) == 1{
+		flag.Usage()
+	}
+
+	// least amount of threads needed, when using all generate strategy, check factory.go
 	if totalThreads < 3 {
 		totalThreads = 3
 	}

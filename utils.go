@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"maps"
 	"net/url"
 	"os"
 	"strings"
@@ -77,4 +78,24 @@ func printAscii() {
  |  __/ ___ \|  _ <  / ___ \| |  | |/  \ 
  |_| /_/   \_\_| \_\/_/   \_\_|  |_/_/\_\                                                            
 	`)
+}
+
+// Separate custom parameters in different urls
+// Useful when total parameters are higher than requested chunk.
+// It slices the overflowed amount and creates a valid url with legal chunks
+// slicing continues until overflow amount goes below 0.
+func addParamsSeparately(urlObj *url.URL, customParams []string, injectValue string, finalUrls *[]string, params url.Values, chunksOverflow, chunks int) {
+	for chunksOverflow > 0 {
+		overflowParams := customParams[:len(customParams)-chunksOverflow]
+		customParams = customParams[len(customParams)-chunksOverflow:]
+		chunksOverflow -= len(overflowParams)
+
+		cpParams := make(url.Values, chunks)
+		maps.Copy(cpParams, params)
+
+		addCustomParams(cpParams, overflowParams, injectValue)
+		addToFinals(urlObj, finalUrls, cpParams)
+	}
+	addCustomParams(params, customParams, injectValue)
+	addToFinals(urlObj, finalUrls, params)
 }
